@@ -1,63 +1,56 @@
-# Stage 1: Build the application
-FROM node:20-alpine AS builder
+# Dockerfile for Next.js application
 
-# Set working directory
+# 1. Builder stage: Install dependencies and build the application
+FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Copy package.json and package-lock.json (or yarn.lock)
-COPY package.json ./
-# If you have a package-lock.json, uncomment the next line
-# COPY package-lock.json ./
-# If you're using yarn, copy yarn.lock instead
-# COPY yarn.lock ./
+# Copy package.json and package-lock.json (if available)
+COPY package.json package-lock.json* ./
 
-# Install dependencies
-# Using npm ci for cleaner installs if package-lock.json exists
-# Otherwise, fall back to npm install
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# Install dependencies using npm ci for reproducible builds
+# Ensure you have a package-lock.json for this to work reliably
+RUN npm ci --prefer-offline --no-audit
 
-# Copy the rest of the application code
+# Copy the rest of the application source code
 COPY . .
 
-# Build the Next.js application
-RUN npm run build
-
-# Stage 2: Production environment (also capable of dev previews)
-FROM node:20-alpine AS runner
-
-WORKDIR /app
-
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-
-# Files needed for 'next dev' (source, config, dependencies)
-COPY --from=builder --chown=appuser:appgroup /app/package.json ./
-# COPY --from=builder --chown=appuser:appgroup /app/package-lock.json ./ # If you use it
-COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
-COPY --from=builder --chown=appuser:appgroup /app/public ./public
-COPY --from=builder --chown=appuser:appgroup /app/src ./src
-COPY --from=builder --chown=appuser:appgroup /app/components.json ./components.json
-COPY --from=builder --chown=appuser:appgroup /app/next.config.ts ./next.config.ts
-COPY --from=builder --chown=appuser:appgroup /app/tailwind.config.ts ./tailwind.config.ts
-COPY --from=builder --chown=appuser:appgroup /app/tsconfig.json ./tsconfig.json
-# If you have a postcss.config.js, copy it too:
-# COPY --from=builder --chown=appuser:appgroup /app/postcss.config.js ./
-
-# Files needed for standalone 'next start' (which is the default CMD)
-# This includes the entire .next directory from the builder stage.
-# It contains .next/standalone for production and other artifacts used by 'next dev'.
-COPY --from=builder --chown=appuser:appgroup /app/.next ./.next
-
-USER appuser
-
-# Set the NODE_ENV to production (platform might override to development for previews)
-ENV NODE_ENV production
-# Disable telemetry
+# Disable Next.js telemetry during the build
 ENV NEXT_TELEMETRY_DISABLED 1
 
-# Expose default port for Next.js (production start) and dev port
-EXPOSE 3000
-EXPOSE 9002
+# Build the Next.js application
+# The `next.config.js` should have `output: 'standalone'`
+RUN npm run build
 
-# Command to run the application for production
-# This targets the server.js file within the .next/standalone directory.
-CMD ["node", ".next/standalone/server.js"]
+# 2. Runner stage: Create a minimal image to run the application
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV production
+# Disable Next.js telemetry in the production image as well
+ENV NEXT_TELEMETRY_DISABLED 1
+
+# Create a non-root user and group for security
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy the standalone output from the builder stage
+# This includes the server.js file, .next/server, and node_modules for the standalone app
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+
+# Copy the public assets
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Copy the static Next.js assets
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Switch to the non-root user
+USER nextjs
+
+# Expose the port the app will run on
+EXPOSE 3000
+
+# Set the default port environment variable (Next.js will use this)
+ENV PORT 3000
+
+# Command to run the Next.js server in standalone mode
+CMD ["node", "server.js"]
