@@ -5,7 +5,7 @@ import Image from 'next/image';
 import type { PassData, PassField } from '@/interfaces/pass-data';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import { QrCode } from 'lucide-react'; // Using QrCode as a generic barcode icon
+import { QRCodeCanvas } from 'qrcode.react';
 
 interface PassPreviewProps {
   passData: PassData | null;
@@ -140,8 +140,15 @@ export function PassPreview({ passData }: PassPreviewProps) {
         {/* Barcode Section */}
         {displayBarcode && (
           <div className="p-4 mt-auto bg-white dark:bg-neutral-100 rounded-lg m-4 shadow-inner flex flex-col items-center space-y-2">
-            {/* Actual barcode rendering is complex. Displaying info and a placeholder icon. */}
-            <QrCode size={80} className="text-neutral-800" /> 
+            <QRCodeCanvas 
+              value={displayBarcode.message} 
+              size={128} // Adjust size as needed
+              bgColor={"#ffffff"} // Standard white background for QR
+              fgColor={"#000000"} // Standard black foreground
+              level={"L"} // Error correction level
+              includeMargin={true}
+              className="rounded-md"
+            />
             {displayBarcode.altText && <p className="text-xs text-center text-neutral-600">{displayBarcode.altText}</p>}
             <p className="text-xs text-center text-neutral-500 font-mono break-all max-w-full">{displayBarcode.message}</p>
           </div>
