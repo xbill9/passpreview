@@ -1,56 +1,56 @@
-# Dockerfile for Next.js application
+# Dockerfile
 
-# 1. Builder stage: Install dependencies and build the application
-FROM node:20-alpine AS builder
+# ---- Base ----
+# Base image for installing dependencies and building the application
+FROM node:20-alpine AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
 WORKDIR /app
 
-# Copy package.json and package-lock.json (if available)
-COPY package.json package-lock.json* ./
+# ---- Dependencies ----
+# Install dependencies using pnpm
+FROM base AS deps
+COPY package.json pnpm-lock.yaml* ./
+# Ensure pnpm uses the store from the cache mount
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile --prod=false
 
-# Install dependencies using npm ci for reproducible builds
-# Ensure you have a package-lock.json for this to work reliably
-RUN npm ci --prefer-offline --no-audit
-
-# Copy the rest of the application source code
-COPY . .
-
-# Disable Next.js telemetry during the build
-ENV NEXT_TELEMETRY_DISABLED 1
-
+# ---- Builder ----
 # Build the Next.js application
-# The `next.config.js` should have `output: 'standalone'`
-RUN npm run build
+FROM base AS builder
+# Copy installed dependencies
+COPY --from=deps /app/node_modules /app/node_modules
+# Copy the rest of the application code
+COPY . .
+# Build the application
+ENV NEXT_TELEMETRY_DISABLED 1
+RUN pnpm build
 
-# 2. Runner stage: Create a minimal image to run the application
+# ---- Runner ----
+# Production image, copy only the standalone output
 FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV production
-# Disable Next.js telemetry in the production image as well
-ENV NEXT_TELEMETRY_DISABLED 1
-
 # Create a non-root user and group for security
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
 
-# Copy the standalone output from the builder stage
-# This includes the server.js file, .next/server, and node_modules for the standalone app
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+# Copy the standalone Next.js application output
+# Ensure correct ownership for the non-root user
+COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
+# Copy the static assets from the public folder
+COPY --from=builder --chown=nextjs:nextjs /app/public ./public
+# Copy the static assets from the .next/static folder (served by Next.js)
+COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
 
-# Copy the public assets
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-
-# Copy the static Next.js assets
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-# Switch to the non-root user
+# Set the user to the non-root user
 USER nextjs
 
-# Expose the port the app will run on
+# Expose the port the app runs on. Default for Next.js is 3000.
 EXPOSE 3000
-
-# Set the default port environment variable (Next.js will use this)
+# Set PORT environment variable, which server.js in standalone mode will use.
 ENV PORT 3000
 
-# Command to run the Next.js server in standalone mode
+# Start the Next.js application (Node.js server from standalone output)
+# This command refers to server.js inside the .next/standalone directory.
 CMD ["node", "server.js"]
